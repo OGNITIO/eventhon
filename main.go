@@ -1,7 +1,8 @@
 // This program is a simple pluggable suscriber for Marathon event
-// bus (i.e.
-// https://mesosphere.github.io/marathon/docs/event-bus.html) which in
-// turn forward events to Riemann servers. (i.e. http://riemann.io)
+// bus. (i.e.
+// https://mesosphere.github.io/marathon/docs/event-bus.html)
+//
+// Author: Lucien R. Zagabe <rz@ognitio.com>
 
 package main
 
@@ -98,10 +99,13 @@ func renderEvent(event map[string]interface{}) (*raidman.Event, error) {
 		return nil, nil
 	case "status_update_event":
 		return &raidman.Event{
-			State:   updateEventStates[event["taskStatus"].(string)],
-			Host:    event["host"].(string),
-			Service: event["appId"].(string),
-			Tags:    []string{event["taskStatus"].(string)},
+			State:       updateEventStates[event["taskStatus"].(string)],
+			Host:        event["host"].(string),
+			Service:     event["appId"].(string),
+			Description: "Marathon event received",
+			Tags:        []string{event["taskStatus"].(string)},
+			Ttl:         10,
+			Metric:      0,
 			Attributes: map[string]string{
 				"timestamp": event["timestamp"].(string),
 				"slaveId":   event["slaveId"].(string),
