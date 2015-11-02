@@ -92,7 +92,7 @@ func renderEvent(event map[string]interface{}) error {
 }
 
 const (
-	taskTemplate = `%s: %s (host: %s)
+	taskTemplate = `%s: %s [host: %s]
 
 Timestamp: %s
 Host: %s
