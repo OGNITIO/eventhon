@@ -12,8 +12,9 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"os"
 
-	"github.com/amir/raidman"
+	"github.com/getsentry/raven-go"
 	log "github.com/golang/glog"
 	"github.com/gorilla/mux"
 )
@@ -45,35 +46,22 @@ func eventHandler(rw http.ResponseWriter, req *http.Request) {
 	b, err := ioutil.ReadAll(req.Body)
 	if err != nil {
 		log.Errorf("Unable to read HTTP request body: %v", err)
-		rw.WriteHeader(http.StatusInternalServerError)
+		rw.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
 	event := make(map[string]interface{})
 	if err := json.Unmarshal(b, &event); err != nil {
 		log.Errorf("Unable to unmarshal request body: %v", err)
-		rw.WriteHeader(http.StatusInternalServerError)
+		rw.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
 	log.Infof("New Marathon event received: %s", event["eventType"].(string))
 
-	revent, err := renderEvent(event)
+	err = renderEvent(event)
 	if err != nil {
 		rw.WriteHeader(http.StatusOK) // Ignore it
-		return
-	}
-
-	c, err := raidman.Dial("tcp", *riemann)
-	if err != nil {
-		log.Errorf("Unable to connect riemann server: %v", err)
-		rw.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-
-	if err := c.Send(revent); err != nil {
-		log.Errorf("Couldn't send event: %v", err)
-		rw.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
@@ -81,39 +69,52 @@ func eventHandler(rw http.ResponseWriter, req *http.Request) {
 }
 
 var (
-	updateEventStates = map[string]string{
-		"TASK_STAGING":  "ok",
-		"TASK_STARTING": "ok",
-		"TASK_RUNNING":  "ok",
-		"TASK_FINISHED": "ok",
-		"TASK_FAILED":   "critical",
-		"TASK_KILLED":   "warning",
-		"TASK_LOST":     "critical",
+	updateEventLevel = map[string]raven.Severity{
+		"TASK_STAGING":  raven.INFO,
+		"TASK_STARTING": raven.INFO,
+		"TASK_RUNNING":  raven.INFO,
+		"TASK_FINISHED": raven.INFO,
+		"TASK_FAILED":   raven.ERROR,
+		"TASK_KILLED":   raven.WARNING,
+		"TASK_LOST":     raven.ERROR,
 	}
 )
 
-func renderEvent(event map[string]interface{}) (*raidman.Event, error) {
+func renderEvent(event map[string]interface{}) error {
 	switch event["eventType"].(string) {
 	case "api_post_event":
 		// TODO(rzagabe): Support API request event.
-		return nil, nil
+		return nil
 	case "status_update_event":
-		return &raidman.Event{
-			State:       updateEventStates[event["taskStatus"].(string)],
-			Host:        event["host"].(string),
-			Service:     event["appId"].(string),
-			Description: "Marathon event received",
-			Tags:        []string{event["taskStatus"].(string)},
-			Ttl:         10,
-			Metric:      0,
-			Attributes: map[string]string{
-				"timestamp": event["timestamp"].(string),
-				"slaveId":   event["slaveId"].(string),
-				"taskId":    event["taskId"].(string),
-				"version":   event["version"].(string),
-			},
-		}, nil
-	default:
-		return nil, fmt.Errorf("Not supported")
+		return captureMessage(updateEventLevel[event["taskStatus"].(string)], event)
 	}
+	return fmt.Errorf("Not supported")
+}
+
+const (
+	taskTemplate = `%s: %s (host: %s)
+
+Timestamp: %s
+Host: %s
+Version: %s
+`
+)
+
+func captureMessage(level raven.Severity, event map[string]interface{}) error {
+	packet := raven.NewPacket(fmt.Sprintf(taskTemplate,
+		event["taskStatus"].(string),
+		event["appId"].(string), event["host"].(string),
+		event["timestamp"].(string), event["host"].(string),
+		event["version"].(string)))
+	packet.Init(os.Getenv("SENTRY_PROJECT"))
+	packet.Level = level
+	packet.Interfaces = []raven.Interface{&raven.Message{
+		Message: fmt.Sprintf("%s %s",
+			event["taskStatus"].(string), event["appId"].(string)),
+	}}
+	raven.Capture(packet, map[string]string{
+		"appId":  event["appId"].(string),
+		"taskId": event["taskId"].(string),
+	})
+	return nil
 }
