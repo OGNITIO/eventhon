@@ -21,7 +21,7 @@ Usage of ./eventhon:
 
 ### Marathon Configuration
 
-As the program listen and serve POSTed events at `/callbacks`, you
+As the program listens and serves POSTed events at `/callbacks`, you
 might add the follow options when running Marathon:
 
 ```
